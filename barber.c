@@ -58,11 +58,11 @@ void *customer(void *t) {
 }
 
 int main(int argc, char *argv[]) {
-    int students = atoi(argv[1]);
+    int numcust = atoi(argv[1]);
     long i;
-    pthread_t b, c[students];
+    pthread_t b, c[numcust];
     pthread_create(&b, NULL, &villagebarber, NULL);
-    for (i = 0; i < students; i++) pthread_create(&c[i], NULL, &customer, (void *) i);
+    for (i = 0; i < numcust; i++) pthread_create(&c[i], NULL, &customer, (void *) i);
     pthread_join(b, NULL);
-    for (i = 0; i < students; i++) pthread_join(c[i], NULL);
+    for (i = 0; i < numcust; i++) pthread_join(c[i], NULL);
 }

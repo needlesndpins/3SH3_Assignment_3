@@ -4,6 +4,9 @@
 #include <stdbool.h>
 #include <stdlib.h>
 #include <unistd.h> 
+#include <semaphore.h>
+
+
 
 #define n 10
 
@@ -69,43 +72,18 @@ pthread_mutex_t lock; //= PTHREAD_MUTEX_INITIALIZER; // Mutex
 /* barber shop monitor */
 /* Based off of my 2SD3 lecture notes */
 
-int barber = 0, chair = 0, exit = 0;
-int chair = 3; 
-int TA = 0; 
-pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;          /* monitor lock */
-pthread_cond_t barberAvailable = PTHREAD_COND_INITIALIZER;  /* signalling condition: barber > 0 */
-pthread_cond_t chairOccupied = PTHREAD_COND_INITIALIZER;    /* signalling condition: chair > 0 */
-pthread_cond_t exitOpen = PTHREAD_COND_INITIALIZER;         /* signalling condition: exit > 0 */
-pthread_cond_t customerLeft = PTHREAD_COND_INITIALIZER;     /* signalling condition: exit = 0 */
+#define NUM_CHAIRS 3
 
-/* monitor invariant: 0 <= barber <= 1 && 0 <= chair <= 1 && 0 <= exit <= 1 */
+// Synchronization primitives
+pthread_mutex_t mutex;
+sem_t ta_sem;
+sem_t student_sem[NUM_CHAIRS];
 
-void getHaircut(long cust) {
-    pthread_mutex_lock(&mutex);                             /* monitor entry */
-        printf("%d waiting for barber\n", cust);
-        while (barber == 0) pthread_cond_wait(&barberAvailable, &mutex);
-        barber -= 1;
-        chair += 1; pthread_cond_signal(&chairOccupied);
-        printf("%d waiting for exit door\n", cust);
-        while (exit == 0) pthread_cond_wait(&exitOpen, &mutex);
-        exit -= 1; pthread_cond_signal(&customerLeft);
-    pthread_mutex_unlock(&mutex);                            /* monitor exit */
-}
-void getNextCustomer() {
-    pthread_mutex_lock(&mutex);                              /* monitor entry */
-        barber += 1 ; pthread_cond_signal(&barberAvailable);
-        printf("waiting for customer to sit in chair\n");
-        while (chair == 0) pthread_cond_wait(&chairOccupied, &mutex);
-        chair -= 1;
-    pthread_mutex_unlock(&mutex);                            /* monitor exit */
-}
-void finishedCut() {
-    pthread_mutex_lock(&mutex);                              /* monitor entry */
-        exit += 1; pthread_cond_signal(&exitOpen);
-        printf("waiting for customer to leave\n");
-        while (exit > 0) pthread_cond_wait(&customerLeft, &mutex);
-    pthread_mutex_unlock(&mutex);                            /* monitor exit */
-}
+// Shared state variables
+int waiting_students = 0;
+int next_seat_in = 0;
+int next_seat_out = 0;
+
 
 // Ask TA for help
 //  *     - Sleeps and asks for help
@@ -119,40 +97,65 @@ void finishedCut() {
 //  *   When TA finishes they must check hall to see if student waiting (check chair semaphore) 
 //  *     - Else go to nap
 
-
 // Request TA for help 
-void *getHelp(int stu){ 
+void getHelp(int stu){ 
     pthread_mutex_lock(&mutex);                            
-        printf("%d Waiting for TA\n",stu);
-
-        if(ta_aval > 0){
-            if(chair_aval > 0){
-                while(TA_Aval == 0) sem_wait(&chair);
-            }
-        }else{
+        if (waiting_students < NUM_CHAIRS) {
+            //take a chair
+            int chair_index = next_seat_in;
+            next_seat_in = (next_seat_in + 1) % NUM_CHAIRS;
+            waiting_students++;
             
-        }
+            printf("%d sat in a chair, Waiting students: %d\n", stu, waiting_students);
 
-        while (barber == 0){
-            pthread_mutex_unlock(&mutex);  
-            sem_wait(&barberAvailable);
-            pthread_mutex_lock(&mutex);  
-        } //pthread_cond_wait(&barberAvailable, &mutex);
-        barber -= 1;
-        chair += 1; pthread_cond_signal(&chairOccupied);
-        printf("%d waiting for exit door\n", cust);
-        while (exit == 0) pthread_cond_wait(&exitOpen, &mutex);
-        exit -= 1; pthread_cond_signal(&customerLeft);
-    pthread_mutex_unlock(&mutex);        
+            //if the TA was asleep, wake the TA
+            if (waiting_students == 1) {
+                sem_post(&ta_sem);
+            }
+            pthread_mutex_unlock(&mutex);
+
+            //wait for the TA to signal this specific chair
+            sem_wait(&student_sem[chair_index]);
+
+            //getting help
+            printf("%d getting help from TA\n", stu);
+            sleep(rand() % 3 + 1);
+            printf("%d finished getting help\n", stu);
+        } else {
+            //chairs are full
+            pthread_mutex_unlock(&mutex);
+            printf("%d chairs are full. returning to programming\n", stu);
+    } 
 }
 
+void getNextStudent(){
+    printf("TA is napping in the office\n");
+    sem_wait(&ta_sem); //wait for a student to arrive and wake up
+
+    while (true) {
+        pthread_mutex_lock(&mutex);
+        if (waiting_students == 0) {
+            pthread_mutex_unlock(&mutex);
+            break; //return to napping
+        }
+
+        //next student
+        int chair_index = next_seat_out;
+        next_seat_out = (next_seat_out + 1) % NUM_CHAIRS;
+        waiting_students--;
+        
+        printf("Helping a student\n");
+        pthread_mutex_unlock(&mutex);
+
+        //signal the next student that the TA is ready
+        sem_post(&student_sem[chair_index]);
+    }
+}
 
 
 void *TA_func(){ 
     while(true){ 
-        getNextStudent();  /* wait for a student to sit in the chair */
-        printf("Helping student\n");
-        finishedHelping();      /* allow the student to leave; returns after the customer left */
+        getNextStudent();  // wait for a student to sit in the chair
         sleep(1);
     }
 }
@@ -168,25 +171,16 @@ void *student(void *t){
     }
 }
 
-void *villagebarber() {
-    while (true) {
-        getNextCustomer();  /* wait for a customer to sit in the barber's chair */
-        printf("cutting hair\n"); sleep(1);
-        finishedCut();      /* allow the customer to leave; returns after the customer left */
-    }
-}
-void *customer(void *t) {
-    long cust = (long) t;
-    while (true) {
-        printf("%d lives happily\n", cust); sleep(2);
-        getHaircut(cust);
-    }
-}
 
 
 int main(int argc, char *argv[]) {
-    int numcust = atoi(argv[1]);
     srand(42);
+
+    pthread_mutex_init(&mutex, NULL);
+    sem_init(&ta_sem, 0, 0);
+    for (int i = 0; i < NUM_CHAIRS; i++) {
+        sem_init(&student_sem[i], 0, 0);
+    }
 
     pthread_t students[n];
     pthread_t ta_worker;
@@ -202,7 +196,7 @@ int main(int argc, char *argv[]) {
     pthread_create(&ta_worker,NULL,TA_func,NULL);
 
     for(int i = 0; i < n; i++){ 
-        ptread_join(students[i],NULL);
+        pthread_join(students[i],NULL);
     }
     pthread_join(ta_worker,NULL);
 }
