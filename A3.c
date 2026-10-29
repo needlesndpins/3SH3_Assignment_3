@@ -5,10 +5,21 @@
 #include <stdlib.h>
 #include <unistd.h> 
 #include <semaphore.h>
-
+#include <stdint.h>
 
 
 #define n 10
+
+static pthread_mutex_t printf_mutex = PTHREAD_MUTEX_INITIALIZER;
+
+//atmoic print
+#define printf(...) do { \
+    pthread_mutex_lock(&printf_mutex); \
+    fprintf(stdout,__VA_ARGS__); \
+    pthread_mutex_unlock(&printf_mutex); \
+} while(0)
+
+
 
 void *student();
 
@@ -78,6 +89,7 @@ pthread_mutex_t lock; //= PTHREAD_MUTEX_INITIALIZER; // Mutex
 pthread_mutex_t mutex;
 sem_t ta_sem;
 sem_t student_sem[NUM_CHAIRS];
+sem_t finished;
 
 // Shared state variables
 int waiting_students = 0;
@@ -101,15 +113,16 @@ int next_seat_out = 0;
 void getHelp(int stu){ 
     pthread_mutex_lock(&mutex);                            
         if (waiting_students < NUM_CHAIRS) {
-            //take a chair
+            //claim a chair
             int chair_index = next_seat_in;
             next_seat_in = (next_seat_in + 1) % NUM_CHAIRS;
             waiting_students++;
             
-            printf("%d sat in a chair, Waiting students: %d\n", stu, waiting_students);
+            if(waiting_students != 1) printf("%d sat in a chair, Waiting students: %d\n", stu, waiting_students); //sit in chair
 
             //if the TA was asleep, wake the TA
             if (waiting_students == 1) {
+                 printf("%d wakes TA\n", stu); 
                 sem_post(&ta_sem);
             }
             pthread_mutex_unlock(&mutex);
@@ -119,8 +132,10 @@ void getHelp(int stu){
 
             //getting help
             printf("%d getting help from TA\n", stu);
-            sleep(rand() % 3 + 1);
+            sleep(rand() % 2 + 1);
             printf("%d finished getting help\n", stu);
+
+            sem_post(&finished); //signal the TA that the student has finished getting help
         } else {
             //chairs are full
             pthread_mutex_unlock(&mutex);
@@ -129,7 +144,6 @@ void getHelp(int stu){
 }
 
 void getNextStudent(){
-    printf("TA is napping in the office\n");
     sem_wait(&ta_sem); //wait for a student to arrive and wake up
 
     while (true) {
@@ -149,7 +163,10 @@ void getNextStudent(){
 
         //signal the next student that the TA is ready
         sem_post(&student_sem[chair_index]);
+
+        sem_wait(&finished); //wait for student to finish before getting next
     }
+    printf("TA is napping in the office\n");
 }
 
 
@@ -161,11 +178,12 @@ void *TA_func(){
 }
 
 void *student(void *t){ 
-    int stu = (int) t;
+    int stu = (uint64_t) t; //student id
 
     while(true){ 
         // int s = rand() % 4;
         // Sleep random amount 0 - 4 seconds
+        sleep((rand() % 4));
         getHelp(stu);
         sleep((rand() % 4));
     }
@@ -178,6 +196,7 @@ int main(int argc, char *argv[]) {
 
     pthread_mutex_init(&mutex, NULL);
     sem_init(&ta_sem, 0, 0);
+    sem_init(&finished, 0, 0);
     for (int i = 0; i < NUM_CHAIRS; i++) {
         sem_init(&student_sem[i], 0, 0);
     }
@@ -189,7 +208,7 @@ int main(int argc, char *argv[]) {
     // pthread_attr_t ta_attr;
 
     // Create n student threads
-    for(int i = 0; i < n; i ++){ 
+    for(uint64_t i = 0; i < n; i ++){ 
         pthread_create(&students[i],NULL,student, (void*) i);
     }
     // Create TA thread
