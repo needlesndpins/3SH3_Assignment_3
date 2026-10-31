@@ -1,268 +1,221 @@
-
 #include <pthread.h>
-#include <stdio.h>
 #include <stdbool.h>
 #include <stdlib.h>
 #include <unistd.h> 
-
-
 #include <semaphore.h>
-#include <fcntl.h>
+// #include <fcntl.h>
 #include <stdio.h>
 
+
+
 #define n 10
+// Use 4 students
+// 1 with TA, 3 sitting in chairs
+#define MAX_WAITING 4 // Max amount of students waiting is 4 
 
-void *student(void *);
+pthread_mutex_t lock = PTHREAD_MUTEX_INITIALIZER; // Mutex
 
+bool ta_sleep = true; // Store if TA is sleeping
 
-int NUM_DEPOSIT = 3;
-int NUM_WITHDRAW = 3;
+int wait_queue[MAX_WAITING];   // Queue of student semaphore IDs 
+int head = 0;                  // Head of queue 
+int tail = 0; 
+int waiting_students = 0;      // Store number of students waiting for TA_help
 
-int amount = 0; // Shared variable
-pthread_mutex_t lock; //= PTHREAD_MUTEX_INITIALIZER; // Mutex
-
-/** Problem formulation
- * The TA's office is small only has one desk with a chair and a computer 
- * 3 Chairs in the hallway outside office where students can sit and wait 
- * When no students TA sits in chair and takes a nap (wait student)
- *  1) If student comes when TA sleeps they wake the TA (signal TA)
- *  2) If student comes and finds TA helping another student waits in chair  (Claim chair)
- *   2.1) If No chairs available, student will come back at later time 
- * Use POSIX threads, mutex locks, and semaphores 
- */
-
-/** 
- * Begin by creating n students (threads) 
- * TA will be 1 separate thread
- * 
- * Execution: 
- *   Student threads alternate b/w programming and asking for help 
- *     - Sleeps and asks for help
- *     - If TA available they obtain help 
- *     - If TA available not available: Sit in chair, or get back to programming if no chairs
- *        wait(chair) 
- *     - if(ta available) { get help } 
- *     - else if (chair available) { sit in chair }  
- *     - else (sleep)
- *   If TA sleeping when student arrives they wake the TA up (signal(TA)) 
- *   When TA finishes they must check hall to see if student waiting (check chair semaphore) 
- *     - Else go to nap
- *  
- *  To model students programming and TA helping, have them sleep for random period of time
- *  
- *   Chair semaphore (3) 
- *   TA Semaphore (1)
- */
+sem_t *student_sem[n];         // Array of student semaphores
+sem_t *student_left;           // Semaphore to signal if student has left
+sem_t *alarm_clock;            // Alarm clock semaphore to wake up TA
 
 
-// The TA’s office is rather
-// small and has room for only one desk with a chair and computer. There are three chairs in the
-// hallway outside the office where students can sit and wait if the TA is currently helping another
-// student. When there are no students who need help during office hours, the TA sits at the desk and
-// takes a nap. If a student arrives during office hours and finds the TA sleeping, the student must
-// awaken the TA to ask for help. If a student arrives and finds the TA currently helping another
-// student, the student sits on one of the chairs in the hallway and waits. If no chairs are available,
-// the student will come back at a later time.
-// Using POSIX threads, mutex locks, and semaphores, implement a solution that
-// coordinates the activities of the TA and the students. Details for this assignment are
-// provided below.
+void *student(void *arg); 
+void *ta();// Tail of queue
 
+void PrintQueue() {
 
-// pthread_mutex_lock(&lock);
+    // pthread_mutex_lock(&lock);
 
-// // Critical section: access shared data safely
+    printf("Waiting Queue: ");
 
-// pthread_mutex_unlock(&lock);
+    for (int i = 0; i < waiting_students; i++) {
+        int index = (head + i) % MAX_WAITING;
+        printf("%d ", wait_queue[index]);
+    }
 
+    printf("\n");
 
-/* barber shop monitor */
-/* Based off of my 2SD3 lecture notes */
-
-int barber = 0, chair = 0, exit = 0;
-// int chair = 3; 
-// int TA = 0; 
-pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;          /* monitor lock */
-pthread_cond_t barberAvailable = PTHREAD_COND_INITIALIZER;  /* signalling condition: barber > 0 */
-pthread_cond_t chairOccupied = PTHREAD_COND_INITIALIZER;    /* signalling condition: chair > 0 */
-pthread_cond_t exitOpen = PTHREAD_COND_INITIALIZER;         /* signalling condition: exit > 0 */
-pthread_cond_t customerLeft = PTHREAD_COND_INITIALIZER;     /* signalling condition: exit = 0 */
-
-/* monitor invariant: 0 <= barber <= 1 && 0 <= chair <= 1 && 0 <= exit <= 1 */
-
-void getHaircut(long cust) {
-    pthread_mutex_lock(&mutex);                             /* monitor entry */
-        printf("%d waiting for barber\n", cust);
-        while (barber == 0) pthread_cond_wait(&barberAvailable, &mutex);
-        barber -= 1;
-        chair += 1; pthread_cond_signal(&chairOccupied);
-        printf("%d waiting for exit door\n", cust);
-        while (exit == 0) pthread_cond_wait(&exitOpen, &mutex);
-        exit -= 1; pthread_cond_signal(&customerLeft);
-    pthread_mutex_unlock(&mutex);                            /* monitor exit */
-}
-void getNextCustomer() {
-    pthread_mutex_lock(&mutex);                              /* monitor entry */
-        barber += 1 ; pthread_cond_signal(&barberAvailable);
-        printf("waiting for customer to sit in chair\n");
-        while (chair == 0) pthread_cond_wait(&chairOccupied, &mutex);
-        chair -= 1;
-    pthread_mutex_unlock(&mutex);                            /* monitor exit */
-}
-void finishedCut() {
-    pthread_mutex_lock(&mutex);                              /* monitor entry */
-        exit += 1; pthread_cond_signal(&exitOpen);
-        printf("waiting for customer to leave\n");
-        while (exit > 0) pthread_cond_wait(&customerLeft, &mutex);
-    pthread_mutex_unlock(&mutex);                            /* monitor exit */
+    // pthread_mutex_unlock(&lock);
 }
 
-// Ask TA for help
-//  *     - Sleeps and asks for help
-//  *     - If TA available they obtain help 
-//  *     - If TA available not available: Sit in chair, or get back to programming if no chairs
-//  *        wait(chair) 
-//  *     - if(ta available) { get help } 
-//  *     - else if (chair available) { sit in chair }  
-//  *     - else (sleep)
-//  *   If TA sleeping when student arrives they wake the TA up (signal(TA)) 
-//  *   When TA finishes they must check hall to see if student waiting (check chair semaphore) 
-//  *     - Else go to nap
 
-sem_t *chair_sem;
-sem_t *ta_sem;
-int ta_avail = 1;
-int chairs_avail = 3;
 
-// Request TA for help 
-void getHelp(int id){ 
+// Student will call this function to get help
+void getHelp(int id) {
 
     pthread_mutex_lock(&lock);
-        printf("Student: %d is trying to get help\n",id);
 
-        // While TA is not available
-        // while(ta_avail == 0){ 
-        //     // Release lock (Avoid deadlock)
-        //     pthread_mutex_unlock(&lock);
-        //     // Wait for TA to be available
-        //     sem_wait(ta_sem);
-        //     // Acquire lock
-        //     pthread_mutex_lock(&lock); // Reacquire lock
-        // }
-        if(ta_avail == 1){ 
-            // Get help 
-            // ta_avail --;
-        }
-        else{ // TA is busy helping other student 
-            // Chair is available
-            if(chairs_avail > 0){ 
-                chairs_avail --; // Take a chair 
+    if (waiting_students < MAX_WAITING) {
 
-                // Sit in chair and wait for TA to be available
-                while(ta_avail == 0){ 
-                    // Release lock (Avoid deadlock)
-                    pthread_mutex_unlock(&lock);
-                    // Wait for TA to be available
-                    sem_wait(ta_sem);
-                    // Acquire lock
-                    pthread_mutex_lock(&lock); // Reacquire lock
-                }
-                // Sit in chair 
-                // WAit for TA to help 
-                // Loop here 
-            }
-            else{ 
-                // No chairs available so go back to programming
+        waiting_students++;
 
-                return;
-            }
-
+        if (ta_sleep) {
+            ta_sleep = false;
+            sem_post(alarm_clock);
+            printf("Student %d woke up TA\n", id);
         }
 
-    pthread_mutex_unlock(&lock);
+        // Throw every student inside queue
+        wait_queue[tail] = id;
+        tail = (tail + 1) % MAX_WAITING;
+
+        // Avoid student waiting at door from siting in chair
+        if(waiting_students != 1){ 
+            printf("Student %d is sitting in chair. ",id);
+            PrintQueue();
+        }
+
+        pthread_mutex_unlock(&lock);
+
+        // Have student wait on their semaphore for TA to help them
+        sem_wait(student_sem[id]);
+
+        printf("Student %d is getting help\n", id);
+        sleep(rand() % 2);
+        printf("Student %d has left\n", id);
+
+        // Say student has left
+        sem_post(student_left);
+
+        // MUST DECREMENT HERE, OR ELSE HAVE 4 PEOPLE IN QUEUE
+        pthread_mutex_lock(&lock); 
+        waiting_students --; 
+        pthread_mutex_unlock(&lock);
+
+    } else {
+
+        // printf("No chairs, student %d leaves\n", id);
+        pthread_mutex_unlock(&lock);
+    }
 }
 
-// TA will get next student to help ()
-void getNextStudent(){ 
+void getNextStudent() {
+
+    // Wait for student to wake up TA
+    sem_wait(alarm_clock);
+
+    // Continuously loop until if condition met 
+    // Explicitly state break condition
+    while (true) {
+
+        pthread_mutex_lock(&lock);
+
+        // Keep going till no more students
+        if (waiting_students == 0) {
+            ta_sleep = true;
+            printf("TA is sleeping\n");
+            pthread_mutex_unlock(&lock);
+            break;
+        }
+
+        // Get next student from waiting queue
+        int id = wait_queue[head];
+        head = (head + 1) % MAX_WAITING;
+
+        // waiting_students--;   // Mark student as having left queue 
+
+        pthread_mutex_unlock(&lock);
+
+        // Notify student TA is ready
+        sem_post(student_sem[id]);
+
+        // Wait for student to leave before getting next
+        sem_wait(student_left);
+    }
 
 }
 
-// TA has finished helping, so check if students are waiting
-// If no students go to sleep
-void finishedHelping(){ 
-
-}
-
-
-
-/* end barber shop monitor */
 
 void *student(void *arg){ 
-    int id = (int) arg;
+    int id = *(int *)arg;
     while(true){ 
-        // int s = rand() % 20;
-        // Sleep random amount 0 - 20ms
-        // usleep((rand() % 20)* 1000);
-
-        sleep(rand() % 4);
-        GetHelp(id);
-        sleep(rand() % 4);
-
-        break;
-    }
-}
-
-void *TA_func(){ 
-    while(true){ 
-
+        // Sleep random time 0-4s
         sleep(rand() % 4); 
+        getHelp(id);
+        sleep(rand() % 8);
+    }
 
-        break;
+
+}
+
+void *ta(){ 
+    while(true){ 
+        getNextStudent();
+
     }
 }
 
-void *villagebarber() {
-    while (true) {
-        getNextCustomer();  /* wait for a customer to sit in the barber's chair */
-        printf("cutting hair\n"); sleep(1);
-        finishedCut();      /* allow the customer to leave; returns after the customer left */
+
+void clearSemaphores() {
+
+    for (int i = 0; i < n; i++) {
+        char name[32];
+
+        sprintf(name, "/student_sem%d", i);
+        sem_unlink(name);
     }
-}
-void *customer(void *t) {
-    long cust = (long) t;
-    while (true) {
-        printf("%d lives happily\n", cust); sleep(2);
-        getHaircut(cust);
-    }
+
+    sem_unlink("/alarm_clock");
+    sem_unlink("/student_left");
+    sem_unlink("/ta_help");
 }
 
 
 int main(int argc, char *argv[]) {
-    int numcust = atoi(argv[1]);
+    // int numcust = atoi(argv[1]);
+    clearSemaphores();
     srand(42);
 
     pthread_t students[n];
     pthread_t ta_worker;
-    // pthread_t workers[NUM_THREADS]; /* Store thread identifiers*/
-    // pthread_attr_t students_attr[NUM_DEPOSIT];
-    // pthread_attr_t ta_attr;
 
-    // Create semaphores
-    chair_sem = sem_open("/chair_sem", O_CREAT, 0600, 3);
-    ta_sem = sem_open("/ta_sem", O_CREAT, 0600, 1);
+
+    // wait_queue[0] = sem_open("/wait_queue0", O_CREAT, 0600, 1);
+    // wait_queue[1] = sem_open("/wait_queue1", O_CREAT, 0600, 1);
+    // wait_queue[2] = sem_open("/wait_queue2", O_CREAT, 0600, 1);
+    // wait_queue[3] = sem_open("/wait_queue3", O_CREAT, 0600, 1);
+
+
+    // Semaphore of students, they wait on it
+    // Each one goes in the wait_queue, students will wait on their semaphore 
+    // TA will post the one ready for help
+    student_sem[0] = sem_open("/student_sem0", O_CREAT, 0600, 0);
+    student_sem[1] = sem_open("/student_sem1", O_CREAT, 0600, 0);
+    student_sem[2] = sem_open("/student_sem2", O_CREAT, 0600, 0);
+    student_sem[3] = sem_open("/student_sem3", O_CREAT, 0600, 0);
+    student_sem[4] = sem_open("/student_sem4", O_CREAT, 0600, 0);
+    student_sem[5] = sem_open("/student_sem5", O_CREAT, 0600, 0);
+    student_sem[6] = sem_open("/student_sem6", O_CREAT, 0600, 0);
+    student_sem[7] = sem_open("/student_sem7", O_CREAT, 0600, 0);
+    student_sem[8] = sem_open("/student_sem8", O_CREAT, 0600, 0);
+    student_sem[9] = sem_open("/student_sem9", O_CREAT, 0600, 0);
+
+    // Student has arrived
+    alarm_clock = sem_open("/alarm_clock", O_CREAT, 0600, 0);   // Used to signal TA to WAKE UP
+    student_left = sem_open("/student_left", O_CREAT, 0600, 0);
+
+    // Array of student IDs
+    // Avoid null pointer casting errors
+    int student_ids[n];
 
     // Create n student threads
     for(int i = 0; i < n; i ++){ 
-        pthread_create(&students[i],NULL,student,(void *)i);
+        student_ids[i] = i;  // Store the ID 
+        pthread_create(&students[i],NULL,student,&student_ids[i]);
     }
     // Create TA thread
-    pthread_create(&ta_worker,NULL,TA_func,NULL);
+    pthread_create(&ta_worker,NULL,ta,NULL);
 
     for(int i = 0; i < n; i++){ 
-        ptread_join(students[i],NULL);
+        pthread_join(students[i],NULL);
     }
     pthread_join(ta_worker,NULL);
 }
-
-
-
-
