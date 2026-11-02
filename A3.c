@@ -85,14 +85,13 @@ pthread_mutex_t lock; //= PTHREAD_MUTEX_INITIALIZER; // Mutex
 
 #define NUM_CHAIRS 3
 
-// Synchronization primitives
 pthread_mutex_t mutex;
 sem_t ta_sem;
 sem_t student_sem[NUM_CHAIRS];
 sem_t finished;
 
-// Shared state variables
 int waiting_students = 0;
+bool ta_awake = false;
 int next_seat_in = 0;
 int next_seat_out = 0;
 
@@ -121,8 +120,9 @@ void getHelp(int stu){
             if(waiting_students != 1) printf("%d sat in a chair, Waiting students: %d\n", stu, waiting_students); //sit in chair
 
             //if the TA was asleep, wake the TA
-            if (waiting_students == 1) {
-                 printf("%d wakes TA\n", stu); 
+            if (waiting_students == 1 && ta_awake == false) {
+                printf("%d wakes TA\n", stu); 
+                ta_awake = true;
                 sem_post(&ta_sem);
             }
             pthread_mutex_unlock(&mutex);
@@ -132,7 +132,7 @@ void getHelp(int stu){
 
             //getting help
             printf("%d getting help from TA\n", stu);
-            sleep(rand() % 2 + 1);
+            sleep((rand() % 2));
             printf("%d finished getting help\n", stu);
 
             sem_post(&finished); //signal the TA that the student has finished getting help
@@ -166,6 +166,7 @@ void getNextStudent(){
         sem_wait(&finished); //wait for student to finish before getting next
     }
     printf("TA is napping in the office\n");
+    ta_awake = false;
 }
 
 
