@@ -158,7 +158,6 @@ void getNextStudent(){
         next_seat_out = (next_seat_out + 1) % NUM_CHAIRS;
         waiting_students--;
         
-        printf("Helping a student\n");
         pthread_mutex_unlock(&mutex);
 
         //signal the next student that the TA is ready
@@ -182,10 +181,10 @@ void *student(void *t){
 
     while(true){ 
         // int s = rand() % 4;
-        // Sleep random amount 0 - 4 seconds
-        sleep((rand() % 4));
+        // Sleep random amount 0 - 6 seconds
+        sleep((rand() % 6));
         getHelp(stu);
-        sleep((rand() % 4));
+        sleep((rand() % 4)+ 1);
     }
 }
 
