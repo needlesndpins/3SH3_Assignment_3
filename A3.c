@@ -20,10 +20,6 @@ static pthread_mutex_t printf_mutex = PTHREAD_MUTEX_INITIALIZER;
 } while(0)
 
 
-
-void *student();
-
-
 pthread_mutex_t lock; //= PTHREAD_MUTEX_INITIALIZER; // Mutex
 
 /** Problem formulation
@@ -117,7 +113,7 @@ void getHelp(int stu){
             next_seat_in = (next_seat_in + 1) % NUM_CHAIRS;
             waiting_students++;
             
-            if(waiting_students != 1) printf("%d sat in a chair, Waiting students: %d\n", stu, waiting_students); //sit in chair
+            if(waiting_students != 1 || ta_awake == true) printf("%d sat in a chair\n", stu); //sit in chair
 
             //if the TA was asleep, wake the TA
             if (waiting_students == 1 && ta_awake == false) {
@@ -148,9 +144,12 @@ void getNextStudent(){
 
     while (true) {
         pthread_mutex_lock(&mutex);
+
         if (waiting_students == 0) {
+            //return to napping
+            ta_awake = false;
             pthread_mutex_unlock(&mutex);
-            break; //return to napping
+            break; 
         }
 
         //next student
@@ -166,14 +165,13 @@ void getNextStudent(){
         sem_wait(&finished); //wait for student to finish before getting next
     }
     printf("TA is napping in the office\n");
-    ta_awake = false;
 }
 
 
 void *TA_func(){ 
     while(true){ 
         getNextStudent();  // wait for a student to sit in the chair
-        sleep(1);
+        usleep(10);
     }
 }
 
