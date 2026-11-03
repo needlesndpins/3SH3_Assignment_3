@@ -69,7 +69,7 @@ void getHelp(int id) {
 
         // Avoid student waiting at door from siting in chair
         if(waiting_students != 1){ 
-            printf("Student %d is sitting in chair. ",id);
+            printf("Student %d is sitting in chair.",id);
             PrintQueue();
         }
 
@@ -95,6 +95,8 @@ void getHelp(int id) {
         // printf("No chairs, student %d leaves\n", id);
         pthread_mutex_unlock(&lock);
     }
+
+
 }
 
 void getNextStudent() {
@@ -165,7 +167,6 @@ void clearSemaphores() {
 
     sem_unlink("/alarm_clock");
     sem_unlink("/student_left");
-    sem_unlink("/ta_help");
 }
 
 
@@ -176,13 +177,6 @@ int main(int argc, char *argv[]) {
 
     pthread_t students[n];
     pthread_t ta_worker;
-
-
-    // wait_queue[0] = sem_open("/wait_queue0", O_CREAT, 0600, 1);
-    // wait_queue[1] = sem_open("/wait_queue1", O_CREAT, 0600, 1);
-    // wait_queue[2] = sem_open("/wait_queue2", O_CREAT, 0600, 1);
-    // wait_queue[3] = sem_open("/wait_queue3", O_CREAT, 0600, 1);
-
 
     // Semaphore of students, they wait on it
     // Each one goes in the wait_queue, students will wait on their semaphore 
